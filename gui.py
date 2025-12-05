@@ -5,7 +5,7 @@ import matplotlib.font_manager
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
                                QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout, QDoubleSpinBox, QGroupBox, QLineEdit, QInputDialog, QColorDialog, QStackedWidget)
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
-from PySide6.QtGui import QFont, QColor, QPalette
+from PySide6.QtGui import QFont, QColor, QPalette, QFontDatabase
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from video_generator import generate_slideshow
@@ -134,7 +134,7 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("幻灯片生成器")
-        self.resize(900, 750)
+        self.resize(900, 550)
         self.selected_images = []
         self.generated_audio_path = None
         self.player = QMediaPlayer()
@@ -268,14 +268,35 @@ class MainWindow(QWidget):
             self.combo_font.addItem(name, path)
         self.combo_font.currentIndexChanged.connect(self.update_font_preview)
         font_layout.addWidget(self.combo_font)
-
-        # Preview Label (small)
-        self.lbl_font_preview = QLabel("字")
-        self.lbl_font_preview.setStyleSheet("border: 1px solid gray; padding: 2px;")
-        self.lbl_font_preview.setFixedSize(30, 30)
-        self.lbl_font_preview.setAlignment(Qt.AlignCenter)
-        font_layout.addWidget(self.lbl_font_preview)
         video_layout.addLayout(font_layout)
+        
+        # Font Preview Section - separate row
+        video_layout.addWidget(QLabel("字体预览 (Font Preview):"))
+        preview_layout = QHBoxLayout()
+        
+        # Chinese preview
+        self.lbl_font_preview_cn = QLabel("中文字体")
+        self.lbl_font_preview_cn.setStyleSheet("border: 1px solid gray; padding: 5px;")
+        self.lbl_font_preview_cn.setFixedSize(120, 40)
+        self.lbl_font_preview_cn.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.lbl_font_preview_cn)
+        
+        # English preview
+        self.lbl_font_preview_en = QLabel("English Font")
+        self.lbl_font_preview_en.setStyleSheet("border: 1px solid gray; padding: 5px;")
+        self.lbl_font_preview_en.setFixedSize(120, 40)
+        self.lbl_font_preview_en.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.lbl_font_preview_en)
+        
+        # Number preview
+        self.lbl_font_preview_num = QLabel("1234567890")
+        self.lbl_font_preview_num.setStyleSheet("border: 1px solid gray; padding: 5px;")
+        self.lbl_font_preview_num.setFixedSize(120, 40)
+        self.lbl_font_preview_num.setAlignment(Qt.AlignCenter)
+        preview_layout.addWidget(self.lbl_font_preview_num)
+        
+        preview_layout.addStretch()
+        video_layout.addLayout(preview_layout)
 
         # Subtitle Size & Margin
         sub_layout = QHBoxLayout()
@@ -671,9 +692,31 @@ class MainWindow(QWidget):
 
     def update_font_preview(self):
         font_size = self.spin_font_size.value()
-        font = self.lbl_font_preview.font()
+        font_path = self.combo_font.currentData()
+        
+        # Create a new font object
+        if font_path:
+            # If a specific font is selected, use it
+            font_id = QFontDatabase.addApplicationFont(font_path)
+            if font_id != -1:
+                font_families = QFontDatabase.applicationFontFamilies(font_id)
+                if font_families:
+                    font = QFont(font_families[0])
+                else:
+                    font = QFont()
+            else:
+                font = QFont()
+        else:
+            # Use default font
+            font = QFont()
+        
+        # Set font size
         font.setPointSize(max(10, min(30, font_size // 2)))
-        self.lbl_font_preview.setFont(font)
+        
+        # Apply font to all preview labels
+        self.lbl_font_preview_cn.setFont(font)
+        self.lbl_font_preview_en.setFont(font)
+        self.lbl_font_preview_num.setFont(font)
 
     def select_images(self):
         file_dialog = QFileDialog(self)

@@ -3,3 +3,4 @@ pillow
 numpy
 PySide6
 requests
+matplotlib
