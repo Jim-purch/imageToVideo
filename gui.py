@@ -2,11 +2,13 @@ import sys
 import os
 import matplotlib.font_manager
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout, QDoubleSpinBox)
-from PySide6.QtCore import Qt, QThread, Signal
+                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout, QDoubleSpinBox, QGroupBox, QLineEdit)
+from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QFont
+from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 
 from video_generator import generate_slideshow
+from minimax_client import MinimaxClient
 
 def list_system_fonts():
     """
@@ -52,7 +54,7 @@ class VideoWorker(QThread):
     progress_update = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random"):
+    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", audio_path=None):
         super().__init__()
         self.image_paths = image_paths
         self.text = text
@@ -63,6 +65,7 @@ class VideoWorker(QThread):
         self.bottom_margin = bottom_margin
         self.zoom_factor = zoom_factor
         self.transition_effect = transition_effect
+        self.audio_path = audio_path
 
     def run(self):
         try:
@@ -76,9 +79,49 @@ class VideoWorker(QThread):
                 bottom_margin=self.bottom_margin,
                 zoom_factor=self.zoom_factor,
                 transition_effect=self.transition_effect,
+                audio_path=self.audio_path,
                 progress_callback=self.progress_update.emit
             )
             self.finished.emit()
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+class AudioWorker(QThread):
+    finished = Signal(str) # Emits output_file path
+    error_occurred = Signal(str)
+
+    def __init__(self, api_key, text, output_file, voice_id, speed, vol, pitch, tone):
+        super().__init__()
+        self.api_key = api_key
+        self.text = text
+        self.output_file = output_file
+        self.voice_id = voice_id
+        self.speed = speed
+        self.vol = vol
+        self.pitch = pitch
+        self.tone = tone
+
+    def run(self):
+        try:
+            client = MinimaxClient(self.api_key)
+            client.generate_speech(self.text, self.output_file, self.voice_id, self.speed, self.vol, self.pitch, self.tone)
+            self.finished.emit(self.output_file)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+class VoiceListWorker(QThread):
+    finished = Signal(list) # Emits list of dicts
+    error_occurred = Signal(str)
+
+    def __init__(self, api_key):
+        super().__init__()
+        self.api_key = api_key
+
+    def run(self):
+        try:
+            client = MinimaxClient(self.api_key)
+            voices = client.fetch_voices()
+            self.finished.emit(voices)
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -86,8 +129,12 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("幻灯片生成器")
-        self.resize(500, 400)
+        self.resize(600, 700) # Increased size
         self.selected_images = []
+        self.generated_audio_path = None
+        self.player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.player.setAudioOutput(self.audio_output)
 
         layout = QVBoxLayout()
 
@@ -180,6 +227,95 @@ class MainWindow(QWidget):
         self.txt_input.setPlaceholderText("请输入要在视频下方滚动的文字...")
         layout.addWidget(self.txt_input)
 
+        # Dubbing Section
+        dubbing_group = QGroupBox("配音设置")
+        dubbing_layout = QVBoxLayout()
+
+        # API Key
+        api_layout = QHBoxLayout()
+        api_layout.addWidget(QLabel("API Key:"))
+        self.txt_api_key = QLineEdit()
+        self.txt_api_key.setEchoMode(QLineEdit.Password)
+        self.txt_api_key.setPlaceholderText("Enter Minimax API Key")
+        api_layout.addWidget(self.txt_api_key)
+        dubbing_layout.addLayout(api_layout)
+
+        # Dubbing Text
+        dubbing_layout.addWidget(QLabel("配音文本 (Dubbing Text):"))
+        self.txt_dubbing_input = QTextEdit()
+        self.txt_dubbing_input.setPlaceholderText("请输入要生成的语音文本...")
+        self.txt_dubbing_input.setFixedHeight(80)
+        dubbing_layout.addWidget(self.txt_dubbing_input)
+
+        # Refresh Voices Button
+        self.btn_refresh_voices = QPushButton("刷新/获取音色 (Fetch Voices)")
+        self.btn_refresh_voices.clicked.connect(self.fetch_voices)
+        api_layout.addWidget(self.btn_refresh_voices)
+
+        # Params (VoiceID, Tone)
+        params_layout1 = QHBoxLayout()
+        params_layout1.addWidget(QLabel("Voice ID:"))
+        # Changed to ComboBox
+        self.combo_voice_id = QComboBox()
+        self.combo_voice_id.setEditable(True) # Allow custom entry if needed
+        self.combo_voice_id.addItem("English_ManWithDeepVoice") # Default
+        params_layout1.addWidget(self.combo_voice_id)
+
+        params_layout1.addWidget(QLabel("Tone:"))
+        self.txt_tone = QLineEdit("happy")
+        params_layout1.addWidget(self.txt_tone)
+        dubbing_layout.addLayout(params_layout1)
+
+        # Params (Speed, Vol, Pitch)
+        params_layout2 = QHBoxLayout()
+
+        params_layout2.addWidget(QLabel("Speed:"))
+        self.spin_speed = QDoubleSpinBox()
+        self.spin_speed.setRange(0.5, 2.0)
+        self.spin_speed.setSingleStep(0.1)
+        self.spin_speed.setValue(1.0)
+        params_layout2.addWidget(self.spin_speed)
+
+        params_layout2.addWidget(QLabel("Vol:"))
+        self.spin_vol = QDoubleSpinBox()
+        self.spin_vol.setRange(0.1, 10.0)
+        self.spin_vol.setSingleStep(0.1)
+        self.spin_vol.setValue(1.0)
+        params_layout2.addWidget(self.spin_vol)
+
+        params_layout2.addWidget(QLabel("Pitch:"))
+        self.spin_pitch = QDoubleSpinBox()
+        self.spin_pitch.setRange(-10.0, 10.0)
+        self.spin_pitch.setSingleStep(0.5)
+        self.spin_pitch.setValue(0.0)
+        params_layout2.addWidget(self.spin_pitch)
+
+        dubbing_layout.addLayout(params_layout2)
+
+        # Action Buttons
+        action_layout = QHBoxLayout()
+        self.btn_gen_audio = QPushButton("生成音频 (Generate Audio)")
+        self.btn_gen_audio.clicked.connect(self.generate_audio)
+        action_layout.addWidget(self.btn_gen_audio)
+
+        self.btn_play_audio = QPushButton("预览 (Play)")
+        self.btn_play_audio.clicked.connect(self.play_audio)
+        self.btn_play_audio.setEnabled(False)
+        action_layout.addWidget(self.btn_play_audio)
+
+        self.btn_stop_audio = QPushButton("停止 (Stop)")
+        self.btn_stop_audio.clicked.connect(self.stop_audio)
+        self.btn_stop_audio.setEnabled(False)
+        action_layout.addWidget(self.btn_stop_audio)
+
+        dubbing_layout.addLayout(action_layout)
+
+        self.lbl_audio_status = QLabel("音频未生成")
+        dubbing_layout.addWidget(self.lbl_audio_status)
+
+        dubbing_group.setLayout(dubbing_layout)
+        layout.addWidget(dubbing_group)
+
         # Generate Button
         self.btn_generate = QPushButton("生成视频")
         self.btn_generate.clicked.connect(self.generate_video)
@@ -193,21 +329,10 @@ class MainWindow(QWidget):
 
     def update_font_preview(self):
         # Update preview label font
-        # Note: Set QFont on QLabel uses system fonts rendering,
-        # which might not perfectly match PIL if PIL loads a custom file not installed.
-        # But we can try to set the font family if it's installed.
-        # For non-installed files (local), QFontDatabase.addApplicationFont might be needed.
-        # For now, we just update size.
-
         font_size = self.spin_font_size.value()
-        # We can't easily preview the exact TTF file in QLabel without loading it into Qt.
-        # But we can update size.
         font = self.lbl_font_preview.font()
         font.setPointSize(max(10, font_size // 2)) # Scale down a bit for UI
         self.lbl_font_preview.setFont(font)
-
-        # If user selected a specific font, maybe we can show its name?
-        # Implementing full WYSIWYG preview for raw TTF files in PySide needs font loading.
         pass
 
     def select_images(self):
@@ -220,14 +345,116 @@ class MainWindow(QWidget):
             self.lbl_images.setText(f"已选择 {len(self.selected_images)} 张图片")
             self.lbl_status.setText(f"已选择 {len(self.selected_images)} 个文件。")
 
+    def fetch_voices(self):
+        api_key = self.txt_api_key.text().strip()
+        if not api_key:
+             QMessageBox.warning(self, "警告", "请输入 API Key 才能获取音色列表。")
+             return
+
+        self.btn_refresh_voices.setEnabled(False)
+        self.lbl_audio_status.setText("正在获取音色列表...")
+
+        self.voice_worker = VoiceListWorker(api_key)
+        self.voice_worker.finished.connect(self.on_voices_fetched)
+        self.voice_worker.error_occurred.connect(self.on_voices_error)
+        self.voice_worker.start()
+
+    def on_voices_fetched(self, voices):
+        self.btn_refresh_voices.setEnabled(True)
+        self.lbl_audio_status.setText("音色列表获取成功")
+
+        current_text = self.combo_voice_id.currentText()
+        self.combo_voice_id.clear()
+
+        for v in voices:
+            # Display: "Voice Name (voice_id)"
+            display_text = f"{v['voice_name']} ({v['voice_id']})"
+            self.combo_voice_id.addItem(display_text, v['voice_id'])
+
+        # Restore previous selection if possible, or select first
+        index = self.combo_voice_id.findData(current_text)
+        if index == -1:
+             # Try to find by text if user typed it
+             index = self.combo_voice_id.findText(current_text, Qt.MatchContains)
+
+        if index != -1:
+            self.combo_voice_id.setCurrentIndex(index)
+
+        QMessageBox.information(self, "成功", f"成功获取 {len(voices)} 个音色。")
+
+    def on_voices_error(self, err_msg):
+        self.btn_refresh_voices.setEnabled(True)
+        self.lbl_audio_status.setText("获取音色失败")
+        QMessageBox.warning(self, "错误", f"获取音色失败：\n{err_msg}")
+
+    def generate_audio(self):
+        api_key = self.txt_api_key.text().strip()
+        text = self.txt_dubbing_input.toPlainText().strip()
+
+        if not api_key:
+             QMessageBox.warning(self, "警告", "请输入 API Key。")
+             return
+        if not text:
+             QMessageBox.warning(self, "警告", "请输入配音文本。")
+             return
+
+        self.btn_gen_audio.setEnabled(False)
+        self.lbl_audio_status.setText("正在生成音频...")
+
+        # Get Voice ID from Combo Data (preferred) or Text
+        voice_id = self.combo_voice_id.currentData()
+        if not voice_id:
+             # If user typed a custom ID or the combo has no data (just text)
+             voice_id = self.combo_voice_id.currentText()
+             # If user picked a loaded item, the text format is "Name (ID)", we might need to parse if data is missing?
+             # But currentData() returns the second arg of addItem.
+             # If the user typed manually in editable combo, currentData might be None.
+             # If user typed "English_ManWithDeepVoice", we use that.
+
+        tone = self.txt_tone.text().strip()
+        speed = self.spin_speed.value()
+        vol = self.spin_vol.value()
+        pitch = self.spin_pitch.value()
+
+        # Save to a temporary file
+        output_file = os.path.abspath("generated_audio.mp3")
+
+        self.audio_worker = AudioWorker(api_key, text, output_file, voice_id, speed, vol, pitch, tone)
+        self.audio_worker.finished.connect(self.on_audio_finished)
+        self.audio_worker.error_occurred.connect(self.on_audio_error)
+        self.audio_worker.start()
+
+    def on_audio_finished(self, path):
+        self.generated_audio_path = path
+        self.btn_gen_audio.setEnabled(True)
+        self.btn_play_audio.setEnabled(True)
+        self.btn_stop_audio.setEnabled(True)
+        self.lbl_audio_status.setText(f"音频已生成: {os.path.basename(path)}")
+        QMessageBox.information(self, "成功", "音频生成成功！")
+
+    def on_audio_error(self, err_msg):
+        self.btn_gen_audio.setEnabled(True)
+        self.lbl_audio_status.setText("音频生成失败")
+        QMessageBox.critical(self, "错误", f"音频生成失败：\n{err_msg}")
+
+    def play_audio(self):
+        if self.generated_audio_path and os.path.exists(self.generated_audio_path):
+            self.player.setSource(QUrl.fromLocalFile(self.generated_audio_path))
+            self.player.play()
+
+    def stop_audio(self):
+        self.player.stop()
+
     def generate_video(self):
         if not self.selected_images:
             QMessageBox.warning(self, "警告", "请至少选择一张图片。")
             return
 
         text = self.txt_input.toPlainText().strip()
+        # It's okay if scrolling text is empty, maybe they just want slides + audio?
+        # But previous logic required text. Let's keep it required unless user says otherwise.
         if not text:
-             QMessageBox.warning(self, "警告", "请输入文字。")
+             QMessageBox.warning(self, "警告", "请输入滚动字幕文字。")
              return
 
         output_path, _ = QFileDialog.getSaveFileName(self, "保存视频", "output.mp4", "Video (*.mp4)")
@@ -244,6 +471,14 @@ class MainWindow(QWidget):
         zoom_factor = self.spin_zoom.value()
         transition_effect = self.combo_transition.currentData()
 
+        # Check if audio is generated and file exists
+        audio_path = None
+        if self.generated_audio_path and os.path.exists(self.generated_audio_path):
+             # Ask user if they want to include the generated audio?
+             # Or just include it if it exists. The requirement says:
+             # "在生成视频时，如果已经获取了mp3，需要将mp3合并到视频里。"
+             audio_path = self.generated_audio_path
+
         self.worker = VideoWorker(
             self.selected_images,
             text,
@@ -253,7 +488,8 @@ class MainWindow(QWidget):
             font_path=font_path,
             bottom_margin=margin,
             zoom_factor=zoom_factor,
-            transition_effect=transition_effect
+            transition_effect=transition_effect,
+            audio_path=audio_path
         )
         self.worker.progress_update.connect(self.update_status)
         self.worker.finished.connect(self.on_finished)
