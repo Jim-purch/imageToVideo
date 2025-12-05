@@ -5,7 +5,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import urllib.request
-from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx, ColorClip
+from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx, ColorClip, AudioFileClip
 
 # Font download URLs (Google Fonts - Noto Sans SC / Ma Shan Zheng)
 # We try multiple URLs because GitHub raw paths can be tricky or change.
@@ -159,12 +159,13 @@ def apply_zoom_effect(clip, zoom_ratio=0.1):
         return 1 + zoom_ratio * (t / clip.duration)
     return clip.with_effects([vfx.Resize(resize_func)])
 
-def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", progress_callback=None):
+def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", audio_path=None, progress_callback=None):
     """
     Generates a slideshow video from images with scrolling text.
     - Applies dynamic zoom (Ken Burns) to images (center-based).
     - Applies transitions between images based on transition_effect.
     transition_effect: "random", "crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"
+    audio_path: Path to background audio/dubbing file.
     progress_callback: A function that takes a string message.
     """
     def log(msg):
@@ -289,11 +290,29 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
     else:
         final_video = background_video
 
-    # 3. Write Output
+    # 3. Add Audio if provided
+    if audio_path and os.path.exists(audio_path):
+        log(f"Adding audio from {audio_path}...")
+        try:
+            audio_clip = AudioFileClip(audio_path)
+            # Handle duration mismatch:
+            # If audio is longer than video, cut it.
+            # If audio is shorter than video, loop it? Or just let it end?
+            # Usually for dubbing, we want it to play once.
+            if audio_clip.duration > final_video.duration:
+                audio_clip = audio_clip.with_duration(final_video.duration)
+
+            final_video = final_video.with_audio(audio_clip)
+        except Exception as e:
+            log(f"Error adding audio: {e}")
+
+    # 4. Write Output
     log(f"Writing video to {output_path}...")
     # MoviePy's write_videofile prints its own progress to stdout/stderr.
     # Capturing that is complex, so we just log the start and end.
-    final_video.write_videofile(output_path, fps=24, codec='libx264', audio=False)
+    # Set audio=True (default) but explicit if we added audio, or audio=False if not?
+    # write_videofile checks if clip has audio.
+    final_video.write_videofile(output_path, fps=24, codec='libx264')
     log("Done.")
 
 if __name__ == "__main__":
