@@ -1,33 +1,50 @@
 import os
 import sys
 import platform
+import random
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import urllib.request
-from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips
+from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx
 
-# Font download URL (Google Fonts - Noto Sans SC for Chinese support)
-FONT_URL = "https://github.com/google/fonts/raw/main/ofl/notosanssc/NotoSansSC-Regular.ttf"
-LOCAL_FONT_PATH = "NotoSansSC-Regular.ttf"
+# Font download URLs (Google Fonts - Noto Sans SC / Ma Shan Zheng)
+# We try multiple URLs because GitHub raw paths can be tricky or change.
+FONT_URLS = [
+    ("NotoSansSC-Regular.otf", "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC-Regular.otf"),
+    ("NotoSansSC-Regular.ttf", "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanssc/NotoSansSC-Regular.ttf"),
+    ("MaShanZheng-Regular.ttf", "https://raw.githubusercontent.com/google/fonts/main/ofl/mashanzheng/MaShanZheng-Regular.ttf"),
+]
 
-def get_font(font_size):
+def get_font(font_size, font_path=None):
     """
     Returns a PIL ImageFont object.
-    Tries to find a local font, downloads one if missing, or falls back to default.
+    If font_path is provided, tries to use it.
+    Otherwise, tries to find a local font, downloads one if missing, or falls back to default.
     """
     try:
-        # 1. Check if we have the downloaded font
-        if not os.path.exists(LOCAL_FONT_PATH):
-            print(f"Downloading font from {FONT_URL}...")
+        if font_path and os.path.exists(font_path):
             try:
-                urllib.request.urlretrieve(FONT_URL, LOCAL_FONT_PATH)
+                return ImageFont.truetype(font_path, font_size)
             except Exception as e:
-                print(f"Failed to download font: {e}")
+                print(f"Error loading provided font path {font_path}: {e}")
 
-        if os.path.exists(LOCAL_FONT_PATH):
-            return ImageFont.truetype(LOCAL_FONT_PATH, font_size)
+        # 1. Check if we have any of the downloaded fonts
+        for filename, url in FONT_URLS:
+            if os.path.exists(filename):
+                return ImageFont.truetype(filename, font_size)
 
-        # 2. Fallback to system fonts (prioritize CJK)
+        # 2. Try to download
+        for filename, url in FONT_URLS:
+            print(f"Attempting to download font from {url}...")
+            try:
+                urllib.request.urlretrieve(url, filename)
+                if os.path.exists(filename):
+                    print(f"Successfully downloaded {filename}")
+                    return ImageFont.truetype(filename, font_size)
+            except Exception as e:
+                print(f"Failed to download from {url}: {e}")
+
+        # 3. Fallback to system fonts (prioritize CJK)
         system = platform.system()
         if system == "Linux":
             # Common Linux CJK fonts
@@ -35,11 +52,15 @@ def get_font(font_size):
                 "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
                 "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+                "/usr/share/fonts/truetype/arphic/uming.ttc",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
                 "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
             ]
             for p in paths:
                 if os.path.exists(p):
+                    print(f"Using system font: {p}")
                     return ImageFont.truetype(p, font_size)
         elif system == "Windows":
              try:
@@ -61,14 +82,13 @@ def get_font(font_size):
     print("Warning: Using default PIL font (may be small/pixelated).")
     return ImageFont.load_default()
 
-def create_text_image(text, height, video_width):
+def create_text_image(text, font_size, video_width, font_path=None):
     """
     Creates a PIL Image containing the text on a transparent background.
     The image width depends on the text length.
     """
     try:
-        font_size = int(height * 0.8)
-        font = get_font(font_size)
+        font = get_font(font_size, font_path)
 
         # Calculate text size using bbox (left, top, right, bottom)
         bbox = font.getbbox(text)
@@ -79,15 +99,17 @@ def create_text_image(text, height, video_width):
             # Handle empty text case
             return None, 0
 
+        # Height of the image should accommodate the font
+        image_height = int(font_size * 1.5)
+
         # Add padding for shadow
         shadow_offset = 3
 
-        img = Image.new('RGBA', (text_width + shadow_offset, height), (0, 0, 0, 0)) # Transparent
+        img = Image.new('RGBA', (text_width + shadow_offset, image_height), (0, 0, 0, 0)) # Transparent
         draw = ImageDraw.Draw(img)
 
         # Draw text centered vertically
-        # text_height is height of glyphs, bbox[1] usually negative or 0.
-        y_pos = (height - font_size) // 2
+        y_pos = (image_height - font_size) // 2
 
         # Shadow (Black)
         draw.text((shadow_offset, y_pos + shadow_offset), text, font=font, fill='black')
@@ -95,7 +117,7 @@ def create_text_image(text, height, video_width):
         # Main Text (White)
         draw.text((0, y_pos), text, font=font, fill='white')
 
-        return img, text_width
+        return img, text_width, image_height
     except Exception as e:
         print(f"Error creating text image: {e}")
         return None, 0
@@ -126,9 +148,20 @@ def resize_with_padding(image_path, target_size):
 
     return np.array(new_img)
 
-def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), progress_callback=None):
+def apply_zoom_effect(clip, zoom_ratio=0.1):
+    """
+    Applies a gradual zoom effect (Ken Burns).
+    Zooms from 1.0 to 1.0 + zoom_ratio over the clip's duration.
+    """
+    def resize_func(t):
+        return 1 + zoom_ratio * (t / clip.duration)
+    return clip.with_effects([vfx.Resize(resize_func)])
+
+def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, progress_callback=None):
     """
     Generates a slideshow video from images with scrolling text.
+    - Applies dynamic zoom (Ken Burns) to images.
+    - Applies random transitions between images (except the first one).
     progress_callback: A function that takes a string message.
     """
     def log(msg):
@@ -140,27 +173,102 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
         log("No images provided.")
         return
 
-    # 1. Prepare Image Clips
-    clips = []
-    clip_duration = duration / len(image_paths)
+    # 1. Prepare Image Clips with Zoom and Transitions
 
-    log(f"Processing {len(image_paths)} images...")
+    # Calculate timings
+    # To handle transitions (overlaps), we need to carefully calculate durations.
+    # Simple approach: Each image has a "display duration" plus "transition duration".
+    # But user gave total `duration`.
+    # Let's say transition takes 1.0s (or less if clip is short).
 
-    for img_path in image_paths:
+    num_images = len(image_paths)
+    transition_duration = 1.0
+
+    # Effective duration per image (without transition overlap accumulation issues)
+    # Total Time = T1 + (T2 - trans) + (T3 - trans) ...
+    # Total Time = T_display * N - (N-1) * trans ?
+    # Let's keep it simple: allocate `clip_duration` for each image as before,
+    # but overlap them by `transition_duration`.
+    # This means total video duration might be slightly shorter than requested if we overlap,
+    # or we increase clip duration to match.
+
+    # Let's stick to the requested total duration.
+    # If we just concatenate with crossfade, the total duration shrinks.
+    # To keep total duration roughly `duration`:
+    #   We have N clips. Overlap is (N-1) * trans.
+    #   Total raw duration needed = duration + (N-1) * trans.
+    #   Each clip duration = Total raw / N.
+
+    if num_images > 1:
+        raw_duration_needed = duration + (num_images - 1) * transition_duration
+    else:
+        raw_duration_needed = duration
+
+    clip_duration = raw_duration_needed / num_images
+
+    # Ensure transition isn't longer than half the clip
+    if transition_duration > clip_duration / 2:
+        transition_duration = clip_duration / 2
+
+    log(f"Processing {len(image_paths)} images with transitions...")
+
+    final_clips = []
+    current_start = 0.0
+
+    # Available transitions
+    # In MoviePy 2.0, we use composition with effects like CrossFadeIn, SlideIn...
+    # Or just positioning.
+    # Simplest reliable set: CrossFadeIn, SlideIn (Left, Right, Top, Bottom)
+
+    transitions_types = ["crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"]
+
+    for i, img_path in enumerate(image_paths):
         # Resize and pad
         img_array = resize_with_padding(img_path, resolution)
+
         # Create ImageClip
         clip = ImageClip(img_array).with_duration(clip_duration)
-        clips.append(clip)
 
-    # Concatenate clips
-    background_video = concatenate_videoclips(clips, method="compose")
+        # Apply Zoom
+        clip = apply_zoom_effect(clip)
+
+        # Set start time
+        if i == 0:
+            clip = clip.with_start(0)
+            current_start += clip_duration
+        else:
+            # Overlap with previous
+            start_time = current_start - transition_duration
+            clip = clip.with_start(start_time)
+
+            # Pick random transition
+            trans_type = random.choice(transitions_types)
+
+            if trans_type == "crossfade":
+                clip = clip.with_effects([vfx.CrossFadeIn(transition_duration)])
+            elif trans_type == "slide_left":
+                # Slide in from right (move to left)
+                clip = clip.with_effects([vfx.SlideIn(transition_duration, side="right")])
+            elif trans_type == "slide_right":
+                 clip = clip.with_effects([vfx.SlideIn(transition_duration, side="left")])
+            elif trans_type == "slide_top":
+                 clip = clip.with_effects([vfx.SlideIn(transition_duration, side="bottom")])
+            elif trans_type == "slide_bottom":
+                 clip = clip.with_effects([vfx.SlideIn(transition_duration, side="top")])
+
+            current_start = start_time + clip_duration
+
+        final_clips.append(clip)
+
+    # Composite clips
+    background_video = CompositeVideoClip(final_clips, size=resolution).with_duration(duration)
 
     # 2. Prepare Scrolling Text
-    banner_height = int(resolution[1] * 0.1) # 10% of height
-    text_img_pil, text_width = create_text_image(text, banner_height, resolution[0])
+    # create_text_image now returns height as well
+    text_result = create_text_image(text, font_size, resolution[0], font_path)
 
-    if text_img_pil:
+    if text_result and text_result[0] is not None:
+        text_img_pil, text_width, image_height = text_result
         text_img_array = np.array(text_img_pil)
         text_clip = ImageClip(text_img_array).with_duration(duration)
 
@@ -174,7 +282,7 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
             # Linear interpolation
             if duration == 0: return (0,0)
             x = start_x + (end_x - start_x) * (t / duration)
-            y = resolution[1] - banner_height - 10 # 10px padding from bottom
+            y = resolution[1] - image_height - 10 # 10px padding from bottom
             return (int(x), int(y))
 
         text_clip = text_clip.with_position(scroll_func)
