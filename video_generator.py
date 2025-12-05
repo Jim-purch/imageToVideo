@@ -5,7 +5,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import urllib.request
-from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx
+from moviepy import VideoFileClip, ImageClip, CompositeVideoClip, concatenate_videoclips, vfx, ColorClip
 
 # Font download URLs (Google Fonts - Noto Sans SC / Ma Shan Zheng)
 # We try multiple URLs because GitHub raw paths can be tricky or change.
@@ -126,7 +126,7 @@ def create_text_image(text, font_size, video_width, font_path=None):
 def resize_with_padding(image_path, target_size):
     """
     Resizes an image to fit within target_size while maintaining aspect ratio,
-    and pads with black to fill the target size.
+    and pads with white to fill the target size.
     """
     pil_img = Image.open(image_path)
     pil_img = pil_img.convert('RGB')
@@ -140,8 +140,8 @@ def resize_with_padding(image_path, target_size):
 
     resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Create black background
-    new_img = Image.new('RGB', target_size, (0, 0, 0))
+    # Create white background
+    new_img = Image.new('RGB', target_size, (255, 255, 255))
     paste_x = (target_w - new_w) // 2
     paste_y = (target_h - new_h) // 2
 
@@ -153,16 +153,18 @@ def apply_zoom_effect(clip, zoom_ratio=0.1):
     """
     Applies a gradual zoom effect (Ken Burns).
     Zooms from 1.0 to 1.0 + zoom_ratio over the clip's duration.
+    Center-anchored zoom is achieved by resizing while the clip is centered in the composition.
     """
     def resize_func(t):
         return 1 + zoom_ratio * (t / clip.duration)
     return clip.with_effects([vfx.Resize(resize_func)])
 
-def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, progress_callback=None):
+def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", progress_callback=None):
     """
     Generates a slideshow video from images with scrolling text.
     - Applies dynamic zoom (Ken Burns) to images (center-based).
-    - Applies random transitions between images (except the first one).
+    - Applies transitions between images based on transition_effect.
+    transition_effect: "random", "crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"
     progress_callback: A function that takes a string message.
     """
     def log(msg):
@@ -196,12 +198,17 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
     if transition_duration > clip_duration / 2:
         transition_duration = clip_duration / 2
 
-    log(f"Processing {len(image_paths)} images with transitions...")
+    log(f"Processing {len(image_paths)} images with transitions ({transition_effect})...")
 
     final_clips = []
+
+    # Add a white background clip as the base layer to prevent black edges
+    white_bg = ColorClip(size=resolution, color=(255, 255, 255)).with_duration(duration)
+    final_clips.append(white_bg)
+
     current_start = 0.0
 
-    transitions_types = ["crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"]
+    valid_transitions = ["crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"]
 
     for i, img_path in enumerate(image_paths):
         # Resize and pad
@@ -215,7 +222,9 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
         clip = ImageClip(img_array).with_duration(clip_duration).with_position("center")
 
         # Apply Zoom
-        clip = apply_zoom_effect(clip)
+        # zoom_factor 1.2 means zoom_ratio 0.2
+        zoom_ratio = max(0.0, zoom_factor - 1.0)
+        clip = apply_zoom_effect(clip, zoom_ratio=zoom_ratio)
 
         # Set start time
         if i == 0:
@@ -226,8 +235,13 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
             start_time = current_start - transition_duration
             clip = clip.with_start(start_time)
 
-            # Pick random transition
-            trans_type = random.choice(transitions_types)
+            # Determine transition type
+            if transition_effect == "random":
+                trans_type = random.choice(valid_transitions)
+            elif transition_effect in valid_transitions:
+                trans_type = transition_effect
+            else:
+                 trans_type = "random"
 
             if trans_type == "crossfade":
                 clip = clip.with_effects([vfx.CrossFadeIn(transition_duration)])

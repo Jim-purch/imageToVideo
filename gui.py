@@ -2,7 +2,7 @@ import sys
 import os
 import matplotlib.font_manager
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout)
+                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout, QDoubleSpinBox)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont
 
@@ -52,7 +52,7 @@ class VideoWorker(QThread):
     progress_update = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50):
+    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random"):
         super().__init__()
         self.image_paths = image_paths
         self.text = text
@@ -61,6 +61,8 @@ class VideoWorker(QThread):
         self.font_size = font_size
         self.font_path = font_path
         self.bottom_margin = bottom_margin
+        self.zoom_factor = zoom_factor
+        self.transition_effect = transition_effect
 
     def run(self):
         try:
@@ -72,6 +74,8 @@ class VideoWorker(QThread):
                 font_size=self.font_size,
                 font_path=self.font_path,
                 bottom_margin=self.bottom_margin,
+                zoom_factor=self.zoom_factor,
+                transition_effect=self.transition_effect,
                 progress_callback=self.progress_update.emit
             )
             self.finished.emit()
@@ -136,6 +140,30 @@ class MainWindow(QWidget):
         settings_layout.addWidget(self.spin_margin)
 
         layout.addLayout(settings_layout)
+
+        # Zoom Scale Input
+        zoom_layout = QHBoxLayout()
+        zoom_layout.addWidget(QLabel("图片放大比例："))
+        self.spin_zoom = QDoubleSpinBox()
+        self.spin_zoom.setRange(1.0, 5.0)
+        self.spin_zoom.setSingleStep(0.1)
+        self.spin_zoom.setValue(1.2)
+        zoom_layout.addWidget(self.spin_zoom)
+
+        # Transition Effect Selection
+        zoom_layout.addWidget(QLabel("转场效果："))
+        self.combo_transition = QComboBox()
+        self.combo_transition.addItem("随机 (Random)", "random")
+        self.combo_transition.addItem("淡入淡出 (Crossfade)", "crossfade")
+        self.combo_transition.addItem("向左滑动 (Slide Left)", "slide_left")
+        self.combo_transition.addItem("向右滑动 (Slide Right)", "slide_right")
+        self.combo_transition.addItem("向上滑动 (Slide Top)", "slide_top")
+        self.combo_transition.addItem("向下滑动 (Slide Bottom)", "slide_bottom")
+        zoom_layout.addWidget(self.combo_transition)
+
+        # Add a spacer to keep layout tight if needed, but here just adding to layout
+        zoom_layout.addStretch()
+        layout.addLayout(zoom_layout)
 
         # Duration Input
         duration_layout = QHBoxLayout()
@@ -213,6 +241,8 @@ class MainWindow(QWidget):
         font_path = self.combo_font.currentData() # Get path from data
         duration = self.spin_duration.value()
         margin = self.spin_margin.value()
+        zoom_factor = self.spin_zoom.value()
+        transition_effect = self.combo_transition.currentData()
 
         self.worker = VideoWorker(
             self.selected_images,
@@ -221,7 +251,9 @@ class MainWindow(QWidget):
             duration=duration,
             font_size=font_size,
             font_path=font_path,
-            bottom_margin=margin
+            bottom_margin=margin,
+            zoom_factor=zoom_factor,
+            transition_effect=transition_effect
         )
         self.worker.progress_update.connect(self.update_status)
         self.worker.finished.connect(self.on_finished)
