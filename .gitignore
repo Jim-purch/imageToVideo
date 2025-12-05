@@ -2,3 +2,5 @@
 *.jpg
 __pycache__/
 *.ttf
+config.json
+*.mp3
