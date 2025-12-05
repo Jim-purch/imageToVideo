@@ -123,10 +123,10 @@ def create_text_image(text, font_size, video_width, font_path=None):
         print(f"Error creating text image: {e}")
         return None, 0
 
-def resize_with_padding(image_path, target_size):
+def resize_with_padding(image_path, target_size, bg_color=(255, 255, 255)):
     """
     Resizes an image to fit within target_size while maintaining aspect ratio,
-    and pads with white to fill the target size.
+    and pads with bg_color to fill the target size.
     """
     pil_img = Image.open(image_path)
     pil_img = pil_img.convert('RGB')
@@ -140,8 +140,8 @@ def resize_with_padding(image_path, target_size):
 
     resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Create white background
-    new_img = Image.new('RGB', target_size, (255, 255, 255))
+    # Create background
+    new_img = Image.new('RGB', target_size, bg_color)
     paste_x = (target_w - new_w) // 2
     paste_y = (target_h - new_h) // 2
 
@@ -159,13 +159,14 @@ def apply_zoom_effect(clip, zoom_ratio=0.1):
         return 1 + zoom_ratio * (t / clip.duration)
     return clip.with_effects([vfx.Resize(resize_func)])
 
-def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", audio_path=None, progress_callback=None):
+def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, transition_effect="random", audio_path=None, bg_color=(255, 255, 255), progress_callback=None):
     """
     Generates a slideshow video from images with scrolling text.
     - Applies dynamic zoom (Ken Burns) to images (center-based).
     - Applies transitions between images based on transition_effect.
     transition_effect: "random", "crossfade", "slide_left", "slide_right", "slide_top", "slide_bottom"
     audio_path: Path to background audio/dubbing file.
+    bg_color: Tuple (r, g, b) for background color.
     progress_callback: A function that takes a string message.
     """
     def log(msg):
@@ -203,9 +204,9 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
 
     final_clips = []
 
-    # Add a white background clip as the base layer to prevent black edges
-    white_bg = ColorClip(size=resolution, color=(255, 255, 255)).with_duration(duration)
-    final_clips.append(white_bg)
+    # Add a background clip as the base layer to prevent black edges
+    base_bg = ColorClip(size=resolution, color=bg_color).with_duration(duration)
+    final_clips.append(base_bg)
 
     current_start = 0.0
 
@@ -213,7 +214,7 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
 
     for i, img_path in enumerate(image_paths):
         # Resize and pad
-        img_array = resize_with_padding(img_path, resolution)
+        img_array = resize_with_padding(img_path, resolution, bg_color=bg_color)
 
         # Create ImageClip
         # Explicitly center the clip. While CompositeVideoClip defaults to center,
