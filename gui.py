@@ -2,7 +2,7 @@ import sys
 import os
 import matplotlib.font_manager
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout)
+                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox, QComboBox, QHBoxLayout, QDoubleSpinBox)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QFont
 
@@ -52,7 +52,7 @@ class VideoWorker(QThread):
     progress_update = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50):
+    def __init__(self, image_paths, text, output_path, duration=30, font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2):
         super().__init__()
         self.image_paths = image_paths
         self.text = text
@@ -61,6 +61,7 @@ class VideoWorker(QThread):
         self.font_size = font_size
         self.font_path = font_path
         self.bottom_margin = bottom_margin
+        self.zoom_factor = zoom_factor
 
     def run(self):
         try:
@@ -72,6 +73,7 @@ class VideoWorker(QThread):
                 font_size=self.font_size,
                 font_path=self.font_path,
                 bottom_margin=self.bottom_margin,
+                zoom_factor=self.zoom_factor,
                 progress_callback=self.progress_update.emit
             )
             self.finished.emit()
@@ -136,6 +138,19 @@ class MainWindow(QWidget):
         settings_layout.addWidget(self.spin_margin)
 
         layout.addLayout(settings_layout)
+
+        # Zoom Scale Input
+        zoom_layout = QHBoxLayout()
+        zoom_layout.addWidget(QLabel("图片放大比例："))
+        self.spin_zoom = QDoubleSpinBox()
+        self.spin_zoom.setRange(1.0, 5.0)
+        self.spin_zoom.setSingleStep(0.1)
+        self.spin_zoom.setValue(1.2)
+        zoom_layout.addWidget(self.spin_zoom)
+
+        # Add a spacer to keep layout tight if needed, but here just adding to layout
+        zoom_layout.addStretch()
+        layout.addLayout(zoom_layout)
 
         # Duration Input
         duration_layout = QHBoxLayout()
@@ -213,6 +228,7 @@ class MainWindow(QWidget):
         font_path = self.combo_font.currentData() # Get path from data
         duration = self.spin_duration.value()
         margin = self.spin_margin.value()
+        zoom_factor = self.spin_zoom.value()
 
         self.worker = VideoWorker(
             self.selected_images,
@@ -221,7 +237,8 @@ class MainWindow(QWidget):
             duration=duration,
             font_size=font_size,
             font_path=font_path,
-            bottom_margin=margin
+            bottom_margin=margin,
+            zoom_factor=zoom_factor
         )
         self.worker.progress_update.connect(self.update_status)
         self.worker.finished.connect(self.on_finished)

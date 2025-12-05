@@ -126,7 +126,7 @@ def create_text_image(text, font_size, video_width, font_path=None):
 def resize_with_padding(image_path, target_size):
     """
     Resizes an image to fit within target_size while maintaining aspect ratio,
-    and pads with black to fill the target size.
+    and pads with white to fill the target size.
     """
     pil_img = Image.open(image_path)
     pil_img = pil_img.convert('RGB')
@@ -140,8 +140,8 @@ def resize_with_padding(image_path, target_size):
 
     resized_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    # Create black background
-    new_img = Image.new('RGB', target_size, (0, 0, 0))
+    # Create white background
+    new_img = Image.new('RGB', target_size, (255, 255, 255))
     paste_x = (target_w - new_w) // 2
     paste_y = (target_h - new_h) // 2
 
@@ -153,12 +153,13 @@ def apply_zoom_effect(clip, zoom_ratio=0.1):
     """
     Applies a gradual zoom effect (Ken Burns).
     Zooms from 1.0 to 1.0 + zoom_ratio over the clip's duration.
+    Center-anchored zoom is achieved by resizing while the clip is centered in the composition.
     """
     def resize_func(t):
         return 1 + zoom_ratio * (t / clip.duration)
     return clip.with_effects([vfx.Resize(resize_func)])
 
-def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, progress_callback=None):
+def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30, resolution=(1000, 1000), font_size=40, font_path=None, bottom_margin=50, zoom_factor=1.2, progress_callback=None):
     """
     Generates a slideshow video from images with scrolling text.
     - Applies dynamic zoom (Ken Burns) to images (center-based).
@@ -215,7 +216,9 @@ def generate_slideshow(image_paths, text, output_path="output.mp4", duration=30,
         clip = ImageClip(img_array).with_duration(clip_duration).with_position("center")
 
         # Apply Zoom
-        clip = apply_zoom_effect(clip)
+        # zoom_factor 1.2 means zoom_ratio 0.2
+        zoom_ratio = max(0.0, zoom_factor - 1.0)
+        clip = apply_zoom_effect(clip, zoom_ratio=zoom_ratio)
 
         # Set start time
         if i == 0:
