@@ -1,7 +1,7 @@
 import sys
 import os
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QPushButton,
-                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar)
+                               QLabel, QTextEdit, QFileDialog, QMessageBox, QProgressBar, QSpinBox)
 from PySide6.QtCore import Qt, QThread, Signal
 
 from video_generator import generate_slideshow
@@ -11,11 +11,12 @@ class VideoWorker(QThread):
     progress_update = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, image_paths, text, output_path):
+    def __init__(self, image_paths, text, output_path, font_size=40):
         super().__init__()
         self.image_paths = image_paths
         self.text = text
         self.output_path = output_path
+        self.font_size = font_size
 
     def run(self):
         try:
@@ -23,6 +24,7 @@ class VideoWorker(QThread):
                 self.image_paths,
                 self.text,
                 self.output_path,
+                font_size=self.font_size,
                 progress_callback=self.progress_update.emit
             )
             self.finished.emit()
@@ -45,6 +47,13 @@ class MainWindow(QWidget):
 
         self.lbl_images = QLabel("未选择图片")
         layout.addWidget(self.lbl_images)
+
+        # Font Size Input
+        layout.addWidget(QLabel("字幕大小："))
+        self.spin_font_size = QSpinBox()
+        self.spin_font_size.setRange(10, 200)
+        self.spin_font_size.setValue(40)
+        layout.addWidget(self.spin_font_size)
 
         # Text Input
         layout.addWidget(QLabel("滚动字幕："))
@@ -90,7 +99,8 @@ class MainWindow(QWidget):
         self.btn_generate.setEnabled(False)
         self.lbl_status.setText("正在生成...")
 
-        self.worker = VideoWorker(self.selected_images, text, output_path)
+        font_size = self.spin_font_size.value()
+        self.worker = VideoWorker(self.selected_images, text, output_path, font_size=font_size)
         self.worker.progress_update.connect(self.update_status)
         self.worker.finished.connect(self.on_finished)
         self.worker.error_occurred.connect(self.on_error)
